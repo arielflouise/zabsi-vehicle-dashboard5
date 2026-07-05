@@ -77,33 +77,37 @@ if not df.empty and "No. Pendaftaran" in df.columns:
 
             new_row_idx = len(df) + 1
 
-            # Formulate parameters to append to the row data without a service account token
-            try:
-                # Fallback to write directly via Streamlit's official engine bypass structure
-                conn.update(data=pd.concat([df, pd.DataFrame([{
-                    "No": new_row_idx, "Kenderaan": str(input_vehicle), "No. Pendaftaran": str(input_plate),
-                    "Jenis Minyak": str(default_fuel), "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
-                    "Tarikh Tamat": input_end.strftime('%Y-%m-%d'), "Lokasi": str(input_lokasi).replace('"', ''),
-                    "PIC": str(input_pic), "Nota / Kegunaan": str(input_nota),
-                    "Road Tax Expiry": rt_str, "Insurance Expiry": ins_str, "Puspakom Expiry": pk_str
-                }])], ignore_index=True))
-                st.success("✅ Berjaya disimpan!")
-                st.rerun()
-            except Exception:
-                # Alternative macro pipeline submission to inject rows cleanly
-                # It serializes fields into a secure query transaction string
-                form_payload = {
-                    "No": new_row_idx, "Kenderaan": input_vehicle, "No. Pendaftaran": input_plate,
-                    "Jenis Minyak": default_fuel, "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
-                    "Tarikh Tamat": input_end.strftime('%Y-%m-%d'), "Lokasi": input_lokasi,
-                    "PIC": input_pic, "Nota / Kegunaan": input_nota,
-                    "Road Tax Expiry": rt_str, "Insurance Expiry": ins_str, "Puspakom Expiry": pk_str
-                }
+            # Create new row data
+            new_row = pd.DataFrame([{
+                "No": new_row_idx, 
+                "Kenderaan": str(input_vehicle), 
+                "No. Pendaftaran": str(input_plate),
+                "Jenis Minyak": str(default_fuel), 
+                "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
+                "Tarikh Tamat": input_end.strftime('%Y-%m-%d'), 
+                "Lokasi": str(input_lokasi).replace('"', ''),
+                "PIC": str(input_pic), 
+                "Nota / Kegunaan": str(input_nota),
+                "Road Tax Expiry": rt_str, 
+                "Insurance Expiry": ins_str, 
+                "Puspakom Expiry": pk_str
+            }])
 
-                # Render temporary data representation instantly for the user interface layout view
-                st.sidebar.success("⏳ Memproses data tempahan... Sistem sedang dikemaskini!")
-                df = pd.concat([df, pd.DataFrame([form_payload])], ignore_index=True)
+            try:
+                # Append new row to existing dataframe
+                updated_df = pd.concat([df, new_row], ignore_index=True)
+                
+                # Update the entire spreadsheet with the new data
+                conn.update(data=updated_df)
+                
+                st.sidebar.success("✅ Tempahan berjaya disimpan!")
                 st.rerun()
+                
+            except Exception as e:
+                st.sidebar.error(f"❌ Gagal menyimpan: {str(e)}")
+                # Show the data that would have been saved for debugging
+                st.sidebar.info("Data yang cuba disimpan:")
+                st.sidebar.dataframe(new_row)
 else:
     st.sidebar.warning("Sila pastikan data dalam Google Sheet anda diisi dengan betul.")
 
