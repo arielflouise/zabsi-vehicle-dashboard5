@@ -16,19 +16,9 @@ try:
     sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
     sheet_id = sheet_url.split("/d/")[1].split("/")[0]
     
-    # Service account credentials from secrets
-    service_account_info = {
-        "type": st.secrets["google_service_account"]["type"],
-        "project_id": st.secrets["google_service_account"]["project_id"],
-        "private_key_id": st.secrets["google_service_account"]["private_key_id"],
-        "private_key": st.secrets["google_service_account"]["private_key"],
-        "client_email": st.secrets["google_service_account"]["client_email"],
-        "client_id": st.secrets["google_service_account"]["client_id"],
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_x509_cert_url": st.secrets["google_service_account"]["client_x509_cert_url"]
-    }
+    # Load service account info from JSON string
+    service_account_info = json.loads(st.secrets["google_service_account_json"])
+    
 except Exception as e:
     st.error(f"Sila pastikan konfigurasi Secrets diisi dengan betul: {str(e)}")
     st.stop()
@@ -41,7 +31,7 @@ try:
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
     
-    # Connect to Google Sheets
+    # Connect to Google Sheets using streamlit-gsheets-connection
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(ttl=1)
     
@@ -121,36 +111,17 @@ if not df.empty and "No. Pendaftaran" in df.columns:
             ]
 
             try:
-                # Get current column headers
-                headers = worksheet.row_values(1)
-                
                 # Append new row to Google Sheet using gspread
                 worksheet.append_row(new_row_data)
                 
-                # Update the local dataframe
-                new_row_df = pd.DataFrame([{
-                    "No": new_row_idx,
-                    "Kenderaan": str(input_vehicle),
-                    "No. Pendaftaran": str(input_plate),
-                    "Jenis Minyak": str(default_fuel),
-                    "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
-                    "Tarikh Tamat": input_end.strftime('%Y-%m-%d'),
-                    "Lokasi": str(input_lokasi).replace('"', ''),
-                    "PIC": str(input_pic),
-                    "Nota / Kegunaan": str(input_nota),
-                    "Road Tax Expiry": rt_str,
-                    "Insurance Expiry": ins_str,
-                    "Puspakom Expiry": pk_str
-                }])
-                
-                df = pd.concat([df, new_row_df], ignore_index=True)
+                # Update the local dataframe for display
+                df = conn.read(ttl=1)  # Refresh data from sheet
                 
                 st.sidebar.success("✅ Tempahan berjaya disimpan!")
                 st.rerun()
                 
             except Exception as e:
                 st.sidebar.error(f"❌ Gagal menyimpan: {str(e)}")
-                # Show the data that would have been saved for debugging
                 st.sidebar.info("Data yang cuba disimpan:")
                 st.sidebar.json({
                     "No": new_row_idx,
