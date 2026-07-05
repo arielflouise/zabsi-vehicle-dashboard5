@@ -11,7 +11,7 @@ st.set_page_config(page_title="Zabsi Vehicle Control", page_icon="🛻", layout=
 st.title("📊 ZABSI Fleet, Booking & Compliance System")
 st.markdown("Sistem Log Penggunaan Kenderaan dan Pemantauan Tarikh Dokumen Syarikat secara Live.")
 
-# 1. Get the Google Sheet URL and Service Account credentials from Secrets
+# 1. Get credentials from Secrets
 try:
     sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
     sheet_id = sheet_url.split("/d/")[1].split("/")[0]
@@ -20,10 +20,10 @@ try:
     service_account_info = json.loads(st.secrets["google_service_account_json"])
     
 except Exception as e:
-    st.error(f"Sila pastikan konfigurasi Secrets diisi dengan betul: {str(e)}")
+    st.error(f"Error loading credentials: {str(e)}")
     st.stop()
 
-# 2. Connect and Read the Google Sheet Data Live
+# 2. Connect to Google Sheets
 try:
     # Authenticate with service account
     credentials = Credentials.from_service_account_info(
@@ -35,23 +35,25 @@ try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(ttl=1)
     
-    # Also keep a direct gspread client for write operations
+    # Direct gspread client for write operations
     gc = gspread.authorize(credentials)
     spreadsheet = gc.open_by_key(sheet_id)
-    worksheet = spreadsheet.get_worksheet(0)  # First sheet
+    worksheet = spreadsheet.get_worksheet(0)
+    
+    st.success("✅ Connected to Google Sheets successfully!")
     
 except Exception as e:
-    st.error(f"Gagal menyambung ke Google Sheets: {str(e)}")
+    st.error(f"Failed to connect to Google Sheets: {str(e)}")
     st.stop()
 
-# Clean Date Columns safely
+# Clean Date Columns
 for col in ["Tarikh Mula", "Tarikh Tamat", "Road Tax Expiry", "Insurance Expiry", "Puspakom Expiry"]:
     if col in df.columns:
         df[col] = pd.to_datetime(df[col], errors='coerce')
 
 today = datetime.datetime.now()
 
-# --- SIDEBAR: STAFF BOOKING FORM ---
+# --- SIDEBAR: BOOKING FORM ---
 st.sidebar.header("➕ Borang Tempahan Baru")
 
 if not df.empty and "No. Pendaftaran" in df.columns:
@@ -59,13 +61,11 @@ if not df.empty and "No. Pendaftaran" in df.columns:
     unique_plates = sorted(df["No. Pendaftaran"].dropna().unique())
 
     with st.sidebar.form(key="booking_form", clear_on_submit=True):
-        input_vehicle = st.selectbox("Pilih Kenderaan", unique_vehicles) if unique_vehicles else st.text_input(
-            "Nama Kenderaan")
+        input_vehicle = st.selectbox("Pilih Kenderaan", unique_vehicles) if unique_vehicles else st.text_input("Nama Kenderaan")
         input_plate = st.selectbox("No. Pendaftaran", unique_plates)
 
         matched_rows = df[df["No. Pendaftaran"] == input_plate]
-        default_fuel = matched_rows["Jenis Minyak"].values[
-            0] if "Jenis Minyak" in df.columns and not matched_rows.empty else "PETROL"
+        default_fuel = matched_rows["Jenis Minyak"].values[0] if "Jenis Minyak" in df.columns and not matched_rows.empty else "PETROL"
         st.caption(f"⛽ Jenis Minyak: **{default_fuel}**")
 
         input_start = st.date_input("Tarikh Mula Perjalanan", datetime.date.today())
@@ -80,13 +80,10 @@ if not df.empty and "No. Pendaftaran" in df.columns:
         if not input_lokasi or not input_pic:
             st.sidebar.error("❌ Sila isi bahagian Lokasi dan PIC!")
         else:
-            # Grab compliance details to copy them down to the new log row
-            rt_val = matched_rows["Road Tax Expiry"].values[
-                0] if "Road Tax Expiry" in df.columns and not matched_rows.empty else None
-            ins_val = matched_rows["Insurance Expiry"].values[
-                0] if "Insurance Expiry" in df.columns and not matched_rows.empty else None
-            pk_val = matched_rows["Puspakom Expiry"].values[
-                0] if "Puspakom Expiry" in df.columns and not matched_rows.empty else None
+            # Get compliance details
+            rt_val = matched_rows["Road Tax Expiry"].values[0] if "Road Tax Expiry" in df.columns and not matched_rows.empty else None
+            ins_val = matched_rows["Insurance Expiry"].values[0] if "Insurance Expiry" in df.columns and not matched_rows.empty else None
+            pk_val = matched_rows["Puspakom Expiry"].values[0] if "Puspakom Expiry" in df.columns and not matched_rows.empty else None
 
             rt_str = pd.to_datetime(rt_val).strftime('%Y-%m-%d') if pd.notnull(rt_val) else ""
             ins_str = pd.to_datetime(ins_val).strftime('%Y-%m-%d') if pd.notnull(ins_val) else ""
@@ -94,7 +91,7 @@ if not df.empty and "No. Pendaftaran" in df.columns:
 
             new_row_idx = len(df) + 1
 
-            # Create new row data as a list (for appending to Google Sheets)
+            # Prepare new row data
             new_row_data = [
                 new_row_idx,
                 str(input_vehicle),
@@ -102,20 +99,20 @@ if not df.empty and "No. Pendaftaran" in df.columns:
                 str(default_fuel),
                 input_start.strftime('%Y-%m-%d'),
                 input_end.strftime('%Y-%m-%d'),
-                str(input_lokasi).replace('"', ''),
+                str(input_lokasi),
                 str(input_pic),
-                str(input_nota),
+                str(input_nota) if input_nota else "",
                 rt_str,
                 ins_str,
                 pk_str
             ]
 
             try:
-                # Append new row to Google Sheet using gspread
+                # Append to Google Sheet
                 worksheet.append_row(new_row_data)
                 
-                # Update the local dataframe for display
-                df = conn.read(ttl=1)  # Refresh data from sheet
+                # Refresh data
+                df = conn.read(ttl=1)
                 
                 st.sidebar.success("✅ Tempahan berjaya disimpan!")
                 st.rerun()
@@ -140,18 +137,16 @@ if not df.empty and "No. Pendaftaran" in df.columns:
 else:
     st.sidebar.warning("Sila pastikan data dalam Google Sheet anda diisi dengan betul.")
 
-# --- MAIN DISPLAY (LIVE VIEW) ---
+# --- MAIN DISPLAY ---
 st.subheader("📋 Log Induk Fleet Kenderaan (Live dari Google Sheets)")
-st.dataframe(df, width="stretch")
+st.dataframe(df, use_container_width=True)
 
 st.markdown("---")
 
 # --- COMPLIANCE ALERTS ---
 st.subheader("🚨 Amaran Pematuhan Dokumen")
 if not df.empty and "No. Pendaftaran" in df.columns:
-    cols_to_check = [c for c in
-                     ["Kenderaan", "No. Pendaftaran", "Road Tax Expiry", "Insurance Expiry", "Puspakom Expiry"] if
-                     c in df.columns]
+    cols_to_check = [c for c in ["Kenderaan", "No. Pendaftaran", "Road Tax Expiry", "Insurance Expiry", "Puspakom Expiry"] if c in df.columns]
     master_fleet = df[cols_to_check].drop_duplicates(subset=["No. Pendaftaran"])
 
     comp_col1, comp_col2, comp_col3 = st.columns(3)
@@ -164,11 +159,11 @@ if not df.empty and "No. Pendaftaran" in df.columns:
                     days_left = (row["Road Tax Expiry"] - today).days
                     plate = row["No. Pendaftaran"]
                     if days_left < 0:
-                        st.error(f"🔴 **{plate}** \n\n EXPIRED ({abs(days_left)} days ago)")
+                        st.error(f"🔴 **{plate}** - EXPIRED ({abs(days_left)} days ago)")
                     elif days_left <= 30:
-                        st.warning(f"🟡 **{plate}** \n\n {days_left} days left!")
+                        st.warning(f"🟡 **{plate}** - {days_left} days left!")
                     else:
-                        st.success(f"🟢 **{plate}** — Active")
+                        st.success(f"🟢 **{plate}** - Active")
 
     with comp_col2:
         st.markdown("#### 🛡️ Insurance Status")
@@ -178,11 +173,11 @@ if not df.empty and "No. Pendaftaran" in df.columns:
                     days_left = (row["Insurance Expiry"] - today).days
                     plate = row["No. Pendaftaran"]
                     if days_left < 0:
-                        st.error(f"🔴 **{plate}** \n\n EXPIRED!")
+                        st.error(f"🔴 **{plate}** - EXPIRED!")
                     elif days_left <= 30:
-                        st.warning(f"🟡 **{plate}** \n\n {days_left} days left")
+                        st.warning(f"🟡 **{plate}** - {days_left} days left")
                     else:
-                        st.success(f"🟢 **{plate}** — Covered")
+                        st.success(f"🟢 **{plate}** - Covered")
 
     with comp_col3:
         st.markdown("#### 🚛 Puspakom Status")
@@ -192,8 +187,8 @@ if not df.empty and "No. Pendaftaran" in df.columns:
                     days_left = (row["Puspakom Expiry"] - today).days
                     plate = row["No. Pendaftaran"]
                     if days_left < 0:
-                        st.error(f"🔴 **{plate}** \n\n OVERDUE")
+                        st.error(f"🔴 **{plate}** - OVERDUE")
                     elif days_left <= 30:
-                        st.warning(f"🟡 **{plate}** \n\n Due in {days_left} days")
+                        st.warning(f"🟡 **{plate}** - Due in {days_left} days")
                     else:
-                        st.success(f"🟢 **{plate}** — Valid")
+                        st.success(f"🟢 **{plate}** - Valid")
