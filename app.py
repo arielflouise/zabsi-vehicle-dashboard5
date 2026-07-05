@@ -2,27 +2,54 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import datetime
-import urllib.parse
-import requests
+import json
+from google.oauth2.service_account import Credentials
+import gspread
 
 st.set_page_config(page_title="Zabsi Vehicle Control", page_icon="🛻", layout="wide")
 
 st.title("📊 ZABSI Fleet, Booking & Compliance System")
 st.markdown("Sistem Log Penggunaan Kenderaan dan Pemantauan Tarikh Dokumen Syarikat secara Live.")
 
-# 1. Get the Google Sheet URL from your Secrets panel
+# 1. Get the Google Sheet URL and Service Account credentials from Secrets
 try:
     sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    # Extract the base Spreadsheet ID to use for direct web form submissions
     sheet_id = sheet_url.split("/d/")[1].split("/")[0]
-except Exception:
-    st.error("Sila pastikan spreadsheet URL dikonfigurasikan di bahagian Secrets.")
+    
+    # Service account credentials from secrets
+    service_account_info = {
+        "type": st.secrets["google_service_account"]["type"],
+        "project_id": st.secrets["google_service_account"]["project_id"],
+        "private_key_id": st.secrets["google_service_account"]["private_key_id"],
+        "private_key": st.secrets["google_service_account"]["private_key"],
+        "client_email": st.secrets["google_service_account"]["client_email"],
+        "client_id": st.secrets["google_service_account"]["client_id"],
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_x509_cert_url": st.secrets["google_service_account"]["client_x509_cert_url"]
+    }
+except Exception as e:
+    st.error(f"Sila pastikan konfigurasi Secrets diisi dengan betul: {str(e)}")
     st.stop()
 
 # 2. Connect and Read the Google Sheet Data Live
 try:
+    # Authenticate with service account
+    credentials = Credentials.from_service_account_info(
+        service_account_info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    
+    # Connect to Google Sheets
     conn = st.connection("gsheets", type=GSheetsConnection)
-    df = conn.read(ttl=1)  # Reads fresh data almost instantly
+    df = conn.read(ttl=1)
+    
+    # Also keep a direct gspread client for write operations
+    gc = gspread.authorize(credentials)
+    spreadsheet = gc.open_by_key(sheet_id)
+    worksheet = spreadsheet.get_worksheet(0)  # First sheet
+    
 except Exception as e:
     st.error(f"Gagal menyambung ke Google Sheets: {str(e)}")
     st.stop()
@@ -77,28 +104,46 @@ if not df.empty and "No. Pendaftaran" in df.columns:
 
             new_row_idx = len(df) + 1
 
-            # Create new row data
-            new_row = pd.DataFrame([{
-                "No": new_row_idx, 
-                "Kenderaan": str(input_vehicle), 
-                "No. Pendaftaran": str(input_plate),
-                "Jenis Minyak": str(default_fuel), 
-                "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
-                "Tarikh Tamat": input_end.strftime('%Y-%m-%d'), 
-                "Lokasi": str(input_lokasi).replace('"', ''),
-                "PIC": str(input_pic), 
-                "Nota / Kegunaan": str(input_nota),
-                "Road Tax Expiry": rt_str, 
-                "Insurance Expiry": ins_str, 
-                "Puspakom Expiry": pk_str
-            }])
+            # Create new row data as a list (for appending to Google Sheets)
+            new_row_data = [
+                new_row_idx,
+                str(input_vehicle),
+                str(input_plate),
+                str(default_fuel),
+                input_start.strftime('%Y-%m-%d'),
+                input_end.strftime('%Y-%m-%d'),
+                str(input_lokasi).replace('"', ''),
+                str(input_pic),
+                str(input_nota),
+                rt_str,
+                ins_str,
+                pk_str
+            ]
 
             try:
-                # Append new row to existing dataframe
-                updated_df = pd.concat([df, new_row], ignore_index=True)
+                # Get current column headers
+                headers = worksheet.row_values(1)
                 
-                # Update the entire spreadsheet with the new data
-                conn.update(data=updated_df)
+                # Append new row to Google Sheet using gspread
+                worksheet.append_row(new_row_data)
+                
+                # Update the local dataframe
+                new_row_df = pd.DataFrame([{
+                    "No": new_row_idx,
+                    "Kenderaan": str(input_vehicle),
+                    "No. Pendaftaran": str(input_plate),
+                    "Jenis Minyak": str(default_fuel),
+                    "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
+                    "Tarikh Tamat": input_end.strftime('%Y-%m-%d'),
+                    "Lokasi": str(input_lokasi).replace('"', ''),
+                    "PIC": str(input_pic),
+                    "Nota / Kegunaan": str(input_nota),
+                    "Road Tax Expiry": rt_str,
+                    "Insurance Expiry": ins_str,
+                    "Puspakom Expiry": pk_str
+                }])
+                
+                df = pd.concat([df, new_row_df], ignore_index=True)
                 
                 st.sidebar.success("✅ Tempahan berjaya disimpan!")
                 st.rerun()
@@ -107,7 +152,20 @@ if not df.empty and "No. Pendaftaran" in df.columns:
                 st.sidebar.error(f"❌ Gagal menyimpan: {str(e)}")
                 # Show the data that would have been saved for debugging
                 st.sidebar.info("Data yang cuba disimpan:")
-                st.sidebar.dataframe(new_row)
+                st.sidebar.json({
+                    "No": new_row_idx,
+                    "Kenderaan": str(input_vehicle),
+                    "No. Pendaftaran": str(input_plate),
+                    "Jenis Minyak": str(default_fuel),
+                    "Tarikh Mula": input_start.strftime('%Y-%m-%d'),
+                    "Tarikh Tamat": input_end.strftime('%Y-%m-%d'),
+                    "Lokasi": str(input_lokasi),
+                    "PIC": str(input_pic),
+                    "Nota / Kegunaan": str(input_nota),
+                    "Road Tax Expiry": rt_str,
+                    "Insurance Expiry": ins_str,
+                    "Puspakom Expiry": pk_str
+                })
 else:
     st.sidebar.warning("Sila pastikan data dalam Google Sheet anda diisi dengan betul.")
 
