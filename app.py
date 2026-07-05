@@ -31,39 +31,28 @@ try:
         "universe_domain": st.secrets["google_service_account"]["universe_domain"]
     }
     
-    st.success("✅ Secrets loaded successfully!")
-    st.info(f"📊 Sheet ID: {sheet_id}")
-    st.info(f"📧 Service Account: {service_account_info['client_email']}")
-    
 except Exception as e:
-    st.error(f"❌ Error loading credentials: {str(e)}")
+    st.error(f"Error loading credentials: {str(e)}")
     st.stop()
 
 # 2. Connect to Google Sheets
 try:
-    st.info("🔄 Authenticating with service account...")
     credentials = Credentials.from_service_account_info(
         service_account_info,
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    st.success("✅ Authentication successful!")
     
     # Connect to Google Sheets using streamlit-gsheets-connection
-    st.info("🔄 Connecting to Google Sheets via streamlit-gsheets...")
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(ttl=1)
-    st.success(f"✅ Connected! Found {len(df)} rows of data.")
     
     # Direct gspread client for write operations
-    st.info("🔄 Setting up gspread client for write operations...")
     gc = gspread.authorize(credentials)
     spreadsheet = gc.open_by_key(sheet_id)
     worksheet = spreadsheet.get_worksheet(0)
-    st.success("✅ gspread client ready!")
     
 except Exception as e:
-    st.error(f"❌ Failed to connect to Google Sheets: {str(e)}")
-    st.error(f"Error type: {type(e).__name__}")
+    st.error(f"Failed to connect to Google Sheets: {str(e)}")
     st.stop()
 
 # Clean Date Columns
@@ -128,7 +117,6 @@ if not df.empty and "No. Pendaftaran" in df.columns:
             ]
 
             try:
-                st.sidebar.info("💾 Saving to Google Sheet...")
                 worksheet.append_row(new_row_data)
                 
                 # Refresh data
